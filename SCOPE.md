@@ -141,7 +141,7 @@ CREATE TABLE expense_share (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     expense_id          BIGINT        NOT NULL REFERENCES expense(id) ON DELETE CASCADE,
     person_id           BIGINT        NOT NULL REFERENCES person(id) ON DELETE RESTRICT,
-    share_input         NUMERIC(12,2) NOT NULL CHECK (share_input >= 0),  -- 700 | 30(%) | 2(shares)
+    share_input         NUMERIC(12,2) CHECK (share_input IS NULL OR share_input >= 0),  -- 700 | 30(%) | 2(shares); NULL for equal splits
     computed_owed_minor BIGINT        NOT NULL,                            -- server-computed only
     UNIQUE (expense_id, person_id)
 );
@@ -218,6 +218,8 @@ ALTER TABLE expense
 -- DERIVED BALANCE (D8: balances are computed, never stored)
 -- net_minor > 0  => person is owed money (others owe them)
 -- net_minor < 0  => person owes money
+-- Settlement signs: money you SENT pays down your debt  => + sent
+--                   money you RECEIVED increases it     => - received
 -- ============================================================
 
 CREATE VIEW person_balance AS
@@ -225,8 +227,8 @@ SELECT p.id                                       AS person_id,
        p.group_id,
        COALESCE(paid.total, 0)
        - COALESCE(owed.total, 0)
-       - COALESCE(sent.total, 0)
-       + COALESCE(recv.total, 0)                  AS net_minor
+       + COALESCE(sent.total, 0)
+       - COALESCE(recv.total, 0)                  AS net_minor
 FROM person p
 LEFT JOIN (
     SELECT paid_by_person_id, SUM(amount_base_minor) AS total

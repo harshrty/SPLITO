@@ -47,7 +47,8 @@ neither is scope creep and is cut.
 - **R-EXP-5** Voided / superseded expenses are retained for audit, never hard-deleted.
 
 ### Balances & settlement
-- **R-BAL-1** Net balance per person = paid − owed + received − sent. **Derived, never stored.**
+- **R-BAL-1** Net balance per person = paid − owed + sent − received (money you sent pays down
+  your debt; money you received increases it). **Derived, never stored.**
 - **R-BAL-2** Simplified view: minimal who-pays-whom list (greedy min-cash-flow, heuristic).
 - **R-BAL-3** Itemized view: every split row contributing to a person's balance.
 - **R-SET-1** A settlement/payment (from → to, amount, date) is its own entity, not an expense.
