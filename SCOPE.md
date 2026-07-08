@@ -129,7 +129,7 @@ CREATE TABLE expense (
     status                VARCHAR(8)   NOT NULL DEFAULT 'active'
                             CHECK (status IN ('active','void')),
     notes                 VARCHAR(500),
-    import_batch_id       BIGINT       REFERENCES import_batch(id) ON DELETE SET NULL,
+    import_batch_id       BIGINT,      -- FK added via ALTER after import_batch exists (see Layer C)
     source_row_number     INTEGER,
     created_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -208,6 +208,11 @@ CREATE TABLE anomaly (
 );
 CREATE INDEX ix_anomaly_batch  ON anomaly (batch_id);
 CREATE INDEX ix_anomaly_status ON anomaly (status);
+
+-- expense → import_batch FK, added now that import_batch exists (avoids forward-reference)
+ALTER TABLE expense
+    ADD CONSTRAINT fk_expense_import_batch
+    FOREIGN KEY (import_batch_id) REFERENCES import_batch(id) ON DELETE SET NULL;
 
 -- ============================================================
 -- DERIVED BALANCE (D8: balances are computed, never stored)
