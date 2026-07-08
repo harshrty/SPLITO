@@ -143,9 +143,9 @@ reproducible, so it's unit-testable and explainable.
 
 ---
 
-## D6 — Backend stack: Django + DRF (recommended) — CONFIRM
+## D6 — Backend stack: Django + DRF — LOCKED (2026-07-09)
 
-**What we chose (pending your confirmation):** Django REST Framework.
+**What we chose:** Django REST Framework.
 
 **Options considered:**
 1. Django + DRF. ✅ (recommended)
