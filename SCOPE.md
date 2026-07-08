@@ -117,7 +117,7 @@ CREATE TABLE expense (
     group_id              BIGINT       NOT NULL REFERENCES expense_group(id) ON DELETE CASCADE,
     spent_on              DATE         NOT NULL,
     description           VARCHAR(200) NOT NULL CHECK (char_length(btrim(description)) >= 1),
-    paid_by_person_id     BIGINT       REFERENCES person(id) ON DELETE RESTRICT,  -- NULL = missing-payer quarantine
+    paid_by_person_id     BIGINT       NOT NULL REFERENCES person(id) ON DELETE RESTRICT,  -- always resolved at commit; missing-payer stays in quarantine
     original_amount_minor BIGINT       NOT NULL                                    -- may be negative (refund)
                             CHECK (original_amount_minor BETWEEN -1000000000 AND 10000000000),
     original_currency     CHAR(3)      NOT NULL CHECK (original_currency IN ('INR','USD')),
@@ -152,8 +152,7 @@ CREATE TABLE settlement (
     group_id       BIGINT      NOT NULL REFERENCES expense_group(id) ON DELETE CASCADE,
     from_person_id BIGINT      NOT NULL REFERENCES person(id) ON DELETE RESTRICT,
     to_person_id   BIGINT      NOT NULL REFERENCES person(id) ON DELETE RESTRICT,
-    amount_minor   BIGINT      NOT NULL CHECK (amount_minor > 0),  -- stored in group base currency (INR)
-    currency       CHAR(3)     NOT NULL DEFAULT 'INR' CHECK (currency IN ('INR','USD')),
+    amount_minor   BIGINT      NOT NULL CHECK (amount_minor > 0),  -- always group base currency (INR); no currency column, so the view can't misread it
     settled_on     DATE        NOT NULL,
     note           VARCHAR(300),
     origin         VARCHAR(24) NOT NULL DEFAULT 'manual'
@@ -256,8 +255,13 @@ LEFT JOIN (
 - **`ON DELETE RESTRICT` on person↔expense/share/settlement:** you cannot delete a person who
   has financial history — protects balance integrity. `CASCADE` only where a child is meaningless
   without its parent (aliases, shares, staged rows, anomalies).
-- **`settlement.amount_minor` is in base currency (INR):** simplification for MVP — settle-ups
-  happen in the home currency. Documented as a deliberate scope decision (DECISIONS.md candidate).
+- **`settlement` is INR-only (no `currency` column):** settle-ups happen in the home currency,
+  and dropping the column removes "false flexibility" — the balance view reads `amount_minor` as
+  base INR, so allowing a USD settlement would silently corrupt balances. The schema can't lie.
+- **Cross-group integrity is enforced in the service layer, not the DB:** nothing at the DB level
+  stops an `expense_share`/`settlement` from referencing a `person` in another group. For this
+  single-group app that's an acceptable trade-off; the DB-level fix (denormalize `group_id` onto the
+  child tables + composite FK `(person_id, group_id)`) is what we'd add if this went multi-tenant.
 - **`person_balance` is a VIEW, not a table:** recomputes from the ledger every read, so it can
   never drift. At this data size the aggregation is trivially cheap.
 - **The Import Report** = `SELECT anomaly_type, detail, proposed_action, status FROM anomaly
