@@ -1,0 +1,16 @@
+# Local Postgres for SPLITO development.
+# Usage: docker compose up -d   (serves on localhost:5433)
+services:
+  db:
+    image: postgres:16
+    container_name: splito-db
+    environment:
+      POSTGRES_USER: splito
+      POSTGRES_PASSWORD: splito
+      POSTGRES_DB: splito
+    ports:
+      - "5433:5432"
+    volumes:
+      - splito_pgdata:/var/lib/postgresql/data
+volumes:
+  splito_pgdata:
