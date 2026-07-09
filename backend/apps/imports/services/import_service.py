@@ -14,6 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.expenses.models import Settlement
+from apps.expenses.services.currency import CurrencyError, CurrencyService
 from apps.expenses.services.expense_service import (ExpenseService,
                                                     ExpenseValidationError)
 
@@ -23,12 +24,24 @@ from .context import (GroupContext, parse_amount, parse_detail_map,
 from .detectors import run_all
 from .parser import parse
 
+# Block-severity anomalies whose fix is a value only the reviewer can supply.
+# We never auto-invent these; the row imports only if a resolved_value is provided.
+CORRECTABLE = ("out_of_bounds_date", "ambiguous_date", "missing_payer",
+               "pct_not_100", "unequal_sum_mismatch")
+
 
 class CommitBlocked(Exception):
     """Raised when unresolved block-severity anomalies remain."""
 
 
+class AlreadyCommitted(Exception):
+    """Raised when a batch that was already committed is committed again."""
+
+
 class ImportService:
+    def __init__(self):
+        self.currency = CurrencyService()
+
     def ingest(self, group, filename: str, file_bytes: bytes, user=None) -> ImportBatch:
         batch = ImportBatch.objects.create(group=group, filename=filename, uploaded_by=user)
         rows = parse(file_bytes, filename)
@@ -71,6 +84,11 @@ class ImportService:
 
     @transaction.atomic
     def commit(self, batch: ImportBatch, today: date, user=None) -> dict:
+        # Idempotency: lock the batch row and refuse a second commit. Without this a
+        # retry / double-click re-runs the whole loop and duplicates the entire ledger.
+        locked = ImportBatch.objects.select_for_update().get(pk=batch.pk)
+        if locked.status == "committed":
+            raise AlreadyCommitted("this import batch has already been committed")
         if batch.anomalies.filter(severity="block", status="pending").exists():
             raise CommitBlocked("resolve all blocking anomalies before committing")
 
@@ -84,40 +102,82 @@ class ImportService:
             anomalies_by_row.setdefault(a.staged_row_id, []).append(a)
 
         for row in rows:
-            raw = row.raw_json
-            types = {a.anomaly_type: a for a in anomalies_by_row.get(row.id, [])}
+            anoms = anomalies_by_row.get(row.id, [])
+            types = {a.anomaly_type: a for a in anoms}
 
             def skip(reason):
                 result["skipped"].append({"row": row.row_number, "reason": reason})
 
-            # rows that are dropped rather than imported
+            # zero amount → always dropped (warn: no economic effect)
             if "zero_amount" in types:
                 skip("zero amount"); continue
-            if "exact_dup" in types:
-                result["voided"] += 1; continue
-            if "fuzzy_dup" in types:
-                result["voided"] += 1; continue
-            if any(t in types for t in ("out_of_bounds_date", "ambiguous_date",
-                                        "missing_payer", "pct_not_100", "unequal_sum_mismatch")):
-                # these need a user-supplied correction we don't auto-invent
-                if not any(types[t].resolved_value for t in types
-                           if t in ("out_of_bounds_date", "ambiguous_date", "missing_payer",
-                                    "pct_not_100", "unequal_sum_mismatch")):
-                    skip("blocked: needs manual correction"); continue
 
-            # settlement reclassification
-            if "settlement_as_expense" in types:
-                self._make_settlement(batch, row, ctx, result)
+            # duplicates → void, UNLESS the reviewer rejected the flag ("keep both")
+            if self._active(types.get("exact_dup")) or self._active(types.get("fuzzy_dup")):
+                result["voided"] += 1; continue
+
+            # correctable blocks need a reviewer-supplied value; we never auto-invent them
+            present = [t for t in CORRECTABLE if t in types]
+            if present and not any(types[t].resolved_value for t in present):
+                skip("blocked: needs manual correction"); continue
+
+            # apply the reviewer's corrections onto a working copy of the row
+            raw = self._apply_resolutions(row.raw_json, anoms, ctx)
+
+            # settlement reclassification, UNLESS the reviewer rejected it ("it is an expense")
+            if self._active(types.get("settlement_as_expense")):
+                self._make_settlement(batch, row, raw, ctx, result)
                 continue
 
-            self._make_expense(batch, row, ctx, expenses, result)
+            self._make_expense(batch, row, raw, ctx, expenses, result)
 
         batch.status = "committed"
         batch.save(update_fields=["status"])
         return result
 
-    def _make_settlement(self, batch, row, ctx, result):
-        raw = row.raw_json
+    # -- resolution application -------------------------------------------
+
+    @staticmethod
+    def _active(anomaly) -> bool:
+        """True when the anomaly's proposed action should still apply — i.e. it exists
+        and the reviewer did not reject (dismiss) it."""
+        return anomaly is not None and anomaly.status != "rejected"
+
+    def _apply_resolutions(self, raw: dict, anomalies, ctx) -> dict:
+        """Overlay reviewer-supplied corrections onto a copy of the raw row so they
+        actually reach the ledger (previously resolved_value was stored but ignored)."""
+        eff = dict(raw)
+        for a in anomalies:
+            rv = a.resolved_value
+            if rv in (None, "", {}, []):
+                continue
+            if a.anomaly_type == "missing_payer":
+                eff["paid_by"] = self._payer_name(rv, ctx)
+            elif a.anomaly_type in ("out_of_bounds_date", "ambiguous_date"):
+                eff["date"] = str(rv)
+            elif a.anomaly_type in ("pct_not_100", "unequal_sum_mismatch"):
+                eff["split_details"] = self._details_str(rv)
+        return eff
+
+    @staticmethod
+    def _payer_name(rv, ctx) -> str:
+        """A resolved payer may arrive as a person id or a raw name; normalise to a
+        name the GroupContext can resolve."""
+        try:
+            pid = int(rv)
+        except (TypeError, ValueError):
+            return str(rv)
+        return ctx.id_to_name.get(pid, str(rv))
+
+    @staticmethod
+    def _details_str(rv) -> str:
+        if isinstance(rv, dict):
+            return "; ".join(f"{k} {v}" for k, v in rv.items())
+        return str(rv)
+
+    # -- ledger writers ----------------------------------------------------
+
+    def _make_settlement(self, batch, row, raw, ctx, result):
         payer = ctx.resolve(raw.get("paid_by", ""))
         parts = parse_name_list(raw.get("split_with", ""))
         target = ctx.resolve(parts[0]) if parts else None
@@ -125,15 +185,25 @@ class ImportService:
         if not (payer and target and amount and amount > 0 and payer != target):
             result["skipped"].append({"row": row.row_number, "reason": "settlement fields incomplete"})
             return
+        settled_on = self._date(raw)
+        if settled_on is None:
+            result["skipped"].append({"row": row.row_number, "reason": "settlement has no valid date"})
+            return
+        # settlements go through the same currency conversion as expenses (was INR 1:1 before)
+        currency = (raw.get("currency") or "").strip() or "INR"
+        try:
+            conv = self.currency.to_base(amount, currency, settled_on)
+        except CurrencyError as exc:
+            result["skipped"].append({"row": row.row_number, "reason": str(exc)})
+            return
         Settlement.objects.create(
             group=batch.group, from_person_id=payer, to_person_id=target,
-            amount_minor=int(amount * 100), settled_on=self._date(raw),
+            amount_minor=conv.amount_base_minor, settled_on=settled_on,
             note=raw.get("notes") or "reclassified from import", origin="reclassified_from_import",
         )
         result["settlements"] += 1
 
-    def _make_expense(self, batch, row, ctx, expenses, result):
-        raw = row.raw_json
+    def _make_expense(self, batch, row, raw, ctx, expenses, result):
         d = self._date(raw)
         payer = ctx.resolve(raw.get("paid_by", ""))
         amount = parse_amount(raw.get("amount", ""))

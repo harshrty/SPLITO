@@ -4,7 +4,7 @@ from datetime import date
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
-from apps.expenses.models import FxRate
+from apps.expenses.models import FxRate, Settlement
 from apps.groups.models import ExpenseGroup, Membership, Person
 
 
@@ -88,3 +88,24 @@ class ApiFlowTests(APITestCase):
         self.client.force_authenticate(other)
         resp = self.client.get(f"/api/groups/{self.group.id}/expenses/")
         self.assertEqual(resp.status_code, 404)  # not their group
+
+    def test_settlement_rejects_person_from_another_group(self):
+        # a person in a different group must not be usable in this group's settlement
+        other_group = ExpenseGroup.objects.create(name="Other", created_by=self.user)
+        outsider = Person.objects.create(group=other_group, canonical_name="Outsider")
+        resp = self.client.post(f"/api/groups/{self.group.id}/settlements/", {
+            "from_person": outsider.id, "to_person": self.aisha.id,
+            "amount_minor": 1000, "settled_on": "2026-04-01",
+        }, format="json")
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn("from_person", resp.data)
+        self.assertEqual(Settlement.objects.filter(group=self.group).count(), 0)
+
+    def test_membership_rejects_person_from_another_group(self):
+        other_group = ExpenseGroup.objects.create(name="Other", created_by=self.user)
+        outsider = Person.objects.create(group=other_group, canonical_name="Outsider")
+        resp = self.client.post(f"/api/groups/{self.group.id}/memberships/", {
+            "person": outsider.id, "joined_on": "2026-02-01",
+        }, format="json")
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn("person", resp.data)
