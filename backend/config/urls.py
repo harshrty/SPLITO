@@ -12,7 +12,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health, name="health"),
     path("api/auth/", include("apps.accounts.urls")),
-    # app routes wired in later steps:
-    # path("api/", include("apps.groups.urls")),
-    # ...
+    path("api/", include("apps.groups.urls")),
+    path("api/", include("apps.expenses.urls")),
+    # import pipeline wired in Step 8
 ]
