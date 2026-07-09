@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, Link } from "react-router-dom";
 import { useAuth } from "./store/auth";
+import { Brand, Avatar, Icon } from "./components/ui";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Groups from "./pages/Groups";
@@ -16,10 +17,15 @@ function Nav() {
   if (!token) return null;
   return (
     <nav className="nav">
-      <Link to="/app" className="brand">SPLITO</Link>
+      <Link to="/app"><Brand /></Link>
       <span className="spacer" />
-      <span className="muted">{user?.display_name}</span>
-      <button className="ghost" onClick={logout}>Logout</button>
+      <span className="user-pill">
+        <Avatar name={user?.display_name || "?"} size={26} />
+        <span className="hide-sm" style={{ fontWeight: 600, fontSize: 14 }}>{user?.display_name}</span>
+      </span>
+      <button className="ghost sm" onClick={logout}>
+        <Icon name="logout" size={15} /><span className="hide-sm">Logout</span>
+      </button>
     </nav>
   );
 }

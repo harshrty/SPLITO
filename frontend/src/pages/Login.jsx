@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import client from "../api/client";
 import { useAuth } from "../store/auth";
+import { Brand, Icon } from "../components/ui";
 
 // Strict-ish email check: local part, single @, dotted domain with a real TLD.
 const EMAIL_RE =
@@ -11,12 +12,14 @@ export default function Login({ initial = "register" }) {
   const [mode, setMode] = useState(initial);
   const [form, setForm] = useState({ email: "", password: "", display_name: "" });
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const setAuth = useAuth((s) => s.setAuth);
   const navigate = useNavigate();
 
   const emailValid = EMAIL_RE.test(form.email);
   const emailTouched = form.email.length > 0;
   const canSubmit =
+    !busy &&
     emailValid &&
     form.password.length >= 8 &&
     (mode === "login" || form.display_name.trim().length > 0);
@@ -25,6 +28,7 @@ export default function Login({ initial = "register" }) {
     e.preventDefault();
     setError("");
     if (!emailValid) return setError("Please enter a valid email address.");
+    setBusy(true);
     try {
       if (mode === "register") await client.post("/auth/register/", form);
       const { data } = await client.post("/auth/login/", {
@@ -36,21 +40,27 @@ export default function Login({ initial = "register" }) {
     } catch (err) {
       const d = err.response?.data;
       setError(typeof d === "object" ? Object.values(d).flat().join(" ") : String(d || "Request failed"));
+    } finally {
+      setBusy(false);
     }
   };
+
+  const isReg = mode === "register";
 
   return (
     <div className="auth-wrap">
       <div className="auth-card">
-        <Link to="/" className="brand center">SPLITO</Link>
-        <h1>{mode === "register" ? "Create your account" : "Welcome back"}</h1>
-        <p className="muted center">
-          {mode === "register" ? "Start splitting expenses honestly." : "Sign in to continue."}
+        <div className="brand-wrap">
+          <Link to="/"><Brand /></Link>
+        </div>
+        <h1>{isReg ? "Create your account" : "Welcome back"}</h1>
+        <p className="sub">
+          {isReg ? "Start splitting expenses honestly." : "Sign in to continue to your groups."}
         </p>
         <form onSubmit={submit}>
-          {mode === "register" && (
-            <label>
-              <span>Display name</span>
+          {isReg && (
+            <label className="field">
+              Display name
               <input
                 placeholder="e.g. Aisha"
                 value={form.display_name}
@@ -58,8 +68,8 @@ export default function Login({ initial = "register" }) {
               />
             </label>
           )}
-          <label>
-            <span>Email</span>
+          <label className="field">
+            Email
             <input
               type="email"
               placeholder="you@example.com"
@@ -69,8 +79,8 @@ export default function Login({ initial = "register" }) {
             />
             {emailTouched && !emailValid && <small className="field-error">Enter a valid email address</small>}
           </label>
-          <label>
-            <span>Password</span>
+          <label className="field">
+            Password
             <input
               type="password"
               placeholder="At least 8 characters"
@@ -79,14 +89,19 @@ export default function Login({ initial = "register" }) {
             />
           </label>
           <button type="submit" className="big" disabled={!canSubmit}>
-            {mode === "login" ? "Sign in" : "Sign up"}
+            {busy ? <span className="spinner" style={{ borderTopColor: "#fff", borderColor: "rgba(255,255,255,.4)" }} /> : <Icon name={isReg ? "sparkles" : "arrowRight"} size={17} />}
+            {isReg ? "Create account" : "Sign in"}
           </button>
         </form>
-        {error && <p className="error center">{error}</p>}
-        <p className="muted center switch">
-          {mode === "login" ? "New to SPLITO? " : "Already have an account? "}
-          <a onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>
-            {mode === "login" ? "Sign up" : "Sign in"}
+        {error && (
+          <div className="alert err" style={{ marginTop: 16 }}>
+            <Icon name="alert" size={18} /><span>{error}</span>
+          </div>
+        )}
+        <p className="switch">
+          {isReg ? "Already have an account? " : "New to SPLITO? "}
+          <a onClick={() => { setMode(isReg ? "login" : "register"); setError(""); }}>
+            {isReg ? "Sign in" : "Create one free"}
           </a>
         </p>
       </div>
