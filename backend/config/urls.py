@@ -14,5 +14,5 @@ urlpatterns = [
     path("api/auth/", include("apps.accounts.urls")),
     path("api/", include("apps.groups.urls")),
     path("api/", include("apps.expenses.urls")),
-    # import pipeline wired in Step 8
+    path("api/", include("apps.imports.urls")),
 ]
