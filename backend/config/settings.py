@@ -4,17 +4,23 @@ from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "dev-insecure-key-do-not-use-in-production-0123456789abcdef",
-)
-DEBUG = os.getenv("DJANGO_DEBUG", "True") == "True"
+# Secure-by-default: DEBUG is off unless explicitly enabled, and a production boot
+# (DEBUG off) refuses to start on the throwaway dev key so we never fail open.
+_DEV_INSECURE_KEY = "dev-insecure-key-do-not-use-in-production-0123456789abcdef"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", _DEV_INSECURE_KEY)
+DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+
+if not DEBUG and SECRET_KEY == _DEV_INSECURE_KEY:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be set to a real secret when DEBUG is off"
+    )
 
 INSTALLED_APPS = [
     "django.contrib.admin",

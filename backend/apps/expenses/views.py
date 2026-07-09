@@ -49,6 +49,12 @@ class SettlementListCreate(generics.ListCreateAPIView):
         group = owned_group(self.request.user, self.kwargs["group_id"])
         return Settlement.objects.filter(group=group).order_by("settled_on", "id")
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        if self.request.method == "POST":
+            ctx["group"] = owned_group(self.request.user, self.kwargs["group_id"])
+        return ctx
+
     def perform_create(self, serializer):
         group = owned_group(self.request.user, self.kwargs["group_id"])
         serializer.save(group=group, origin="manual")

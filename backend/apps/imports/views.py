@@ -8,7 +8,8 @@ from rest_framework.views import APIView
 from apps.groups.views import owned_group
 
 from .models import Anomaly, ImportBatch
-from .services.import_service import CommitBlocked, ImportService
+from .services.import_service import (AlreadyCommitted, CommitBlocked,
+                                      ImportService)
 
 
 def _owned_batch(user, batch_id):
@@ -52,6 +53,6 @@ class ImportCommitView(APIView):
         batch = _owned_batch(request.user, batch_id)
         try:
             result = ImportService().commit(batch, timezone.localdate(), user=request.user)
-        except CommitBlocked as exc:
+        except (CommitBlocked, AlreadyCommitted) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response(result)

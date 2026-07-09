@@ -84,4 +84,13 @@ class SettlementSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("from_person and to_person must differ")
         if attrs["amount_minor"] <= 0:
             raise serializers.ValidationError("amount_minor must be positive")
+        # both persons must belong to THIS group — otherwise a settlement can reference
+        # (and corrupt the balance of) a person in another user's group.
+        group = self.context.get("group")
+        if group is not None:
+            for role in ("from_person", "to_person"):
+                if attrs[role].group_id != group.id:
+                    raise serializers.ValidationError(
+                        {role: "person is not a member of this group"}
+                    )
         return attrs
