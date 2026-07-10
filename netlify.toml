@@ -1,0 +1,19 @@
+# Netlify config for the SPLITO frontend (a Vite SPA that lives in frontend/).
+# The app is a monorepo, so `base` points Netlify at the frontend package;
+# `publish` (dist) is resolved relative to that base.
+[build]
+  base = "frontend"
+  command = "npm install && npm run build"
+  publish = "dist"
+
+# Single-page app: every route must fall back to index.html (client-side router),
+# otherwise deep links / refreshes 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# NOTE: set VITE_API_URL in Netlify → Site settings → Environment variables
+# (e.g. https://<your-api>.onrender.com/api) BEFORE the build — Vite bakes it in
+# at build time. Without it the app calls http://localhost:8000 and can't reach
+# the backend.

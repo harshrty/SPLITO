@@ -1,10 +1,7 @@
-# Render blueprint for SPLITO (backend web service + Postgres + static frontend).
+# Render blueprint for SPLITO (backend web service + static frontend).
+# Postgres is hosted externally on Neon — set DATABASE_URL in the Render dashboard
+# (never commit the connection string; it carries a password).
 # Deploy: push to GitHub, then "New > Blueprint" on render.com and point at this file.
-databases:
-  - name: splito-db
-    databaseName: splito
-    plan: free
-
 services:
   - type: web
     name: splito-api
@@ -21,9 +18,7 @@ services:
       - key: DJANGO_ALLOWED_HOSTS
         value: ".onrender.com"
       - key: DATABASE_URL
-        fromDatabase:
-          name: splito-db
-          property: connectionString
+        sync: false   # paste your Neon connection string here in the dashboard
       - key: CORS_ALLOWED_ORIGINS
         sync: false   # set to your frontend URL after first deploy
       - key: CSRF_TRUSTED_ORIGINS
