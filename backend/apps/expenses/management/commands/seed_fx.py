@@ -12,18 +12,18 @@ from apps.expenses.models import FxRate
 
 # (currency, rate_to_base, effective_date)
 SEED_RATES = [
-    ("USD", "83.50", date(2026, 1, 1)),
+    ("USD", "92.00", date(2026, 1, 1)),
 ]
 
 
 class Command(BaseCommand):
-    help = "Seed documented FX rates (idempotent)."
+    help = "Seed documented FX rates (idempotent; re-running updates the rate to the seed value)."
 
     def handle(self, *args, **options):
         for currency, rate, eff in SEED_RATES:
-            obj, created = FxRate.objects.get_or_create(
+            obj, created = FxRate.objects.update_or_create(
                 currency=currency, effective_date=eff,
                 defaults={"rate_to_base": rate},
             )
-            verb = "created" if created else "exists"
+            verb = "created" if created else "updated"
             self.stdout.write(f"{verb}: 1 {currency} = {obj.rate_to_base} INR (from {eff})")
