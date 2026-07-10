@@ -1,6 +1,6 @@
-# Render blueprint for SPLITO (backend web service + static frontend).
-# Postgres is hosted externally on Neon — set DATABASE_URL in the Render dashboard
-# (never commit the connection string; it carries a password).
+# Render blueprint for the SPLITO backend API only.
+# The frontend is hosted on Netlify (see netlify.toml); Postgres is on Neon —
+# set DATABASE_URL in the Render dashboard (never commit the connection string).
 # Deploy: push to GitHub, then "New > Blueprint" on render.com and point at this file.
 services:
   - type: web
@@ -20,21 +20,6 @@ services:
       - key: DATABASE_URL
         sync: false   # paste your Neon connection string here in the dashboard
       - key: CORS_ALLOWED_ORIGINS
-        sync: false   # set to your frontend URL after first deploy
+        sync: false   # your Netlify URL, e.g. https://comfy-centaur-05172a.netlify.app
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
-
-  - type: web
-    name: splito-web
-    runtime: static
-    rootDir: frontend
-    plan: free
-    buildCommand: "npm install && npm run build"
-    staticPublishPath: dist
-    envVars:
-      - key: VITE_API_URL
-        sync: false   # set to https://splito-api.onrender.com/api
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
