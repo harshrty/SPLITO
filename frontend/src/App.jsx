@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, Link } from "react-router-dom";
 import { useAuth } from "./store/auth";
+import client from "./api/client";
 import { Brand, Avatar, Icon } from "./components/ui";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
@@ -13,8 +14,13 @@ function Private({ children }) {
 }
 
 function Nav() {
-  const { user, token, logout } = useAuth();
+  const { user, token, refresh, logout } = useAuth();
   if (!token) return null;
+  // Revoke the refresh token server-side, then clear local state regardless.
+  const signOut = async () => {
+    try { if (refresh) await client.post("/auth/logout/", { refresh }); } catch { /* best effort */ }
+    logout();
+  };
   return (
     <nav className="nav">
       <Link to="/app"><Brand /></Link>
@@ -23,7 +29,7 @@ function Nav() {
         <Avatar name={user?.display_name || "?"} size={26} />
         <span className="hide-sm" style={{ fontWeight: 600, fontSize: 14 }}>{user?.display_name}</span>
       </span>
-      <button className="ghost sm" onClick={logout}>
+      <button className="ghost sm" onClick={signOut}>
         <Icon name="logout" size={15} /><span className="hide-sm">Logout</span>
       </button>
     </nav>
