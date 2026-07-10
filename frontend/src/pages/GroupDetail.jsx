@@ -5,6 +5,24 @@ import client from "../api/client";
 import { rupees } from "../lib/money";
 import { Icon, Avatar, Badge, EmptyState, Spinner } from "../components/ui";
 
+// Inline editor for a member's leave date (left_on). Empty = still a member.
+function LeaveDateEditor({ membership, onSave, saving }) {
+  const [val, setVal] = useState(membership.left_on || "");
+  const dirty = val !== (membership.left_on || "");
+  return (
+    <div className="row" style={{ gap: 6, marginTop: 4 }}>
+      <input type="date" value={val} min={membership.joined_on} onChange={(e) => setVal(e.target.value)}
+        style={{ maxWidth: 150, fontSize: 12, padding: "4px 8px" }} title="Leave date (left_on)" />
+      <button className="ghost sm icon-btn" title="Save leave date" disabled={saving || !dirty}
+        onClick={() => onSave(val || null)}><Icon name="check" size={14} /></button>
+      {membership.left_on && (
+        <button className="ghost sm icon-btn" title="Clear leave date" disabled={saving}
+          onClick={() => { setVal(""); onSave(null); }}><Icon name="x" size={14} /></button>
+      )}
+    </div>
+  );
+}
+
 export default function GroupDetail() {
   const { id } = useParams();
   const qc = useQueryClient();
@@ -12,6 +30,7 @@ export default function GroupDetail() {
     qc.invalidateQueries({ queryKey: ["balances", id] });
     qc.invalidateQueries({ queryKey: ["expenses", id] });
     qc.invalidateQueries({ queryKey: ["simplified", id] });
+    qc.invalidateQueries({ queryKey: ["settlements", id] });
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -22,25 +41,49 @@ export default function GroupDetail() {
   const expenses = useQuery({ queryKey: ["expenses", id], queryFn: () => client.get(`/groups/${id}/expenses/`).then((r) => r.data) });
   const balances = useQuery({ queryKey: ["balances", id], queryFn: () => client.get(`/groups/${id}/balances/`).then((r) => r.data) });
   const simplified = useQuery({ queryKey: ["simplified", id], queryFn: () => client.get(`/groups/${id}/balances/simplified/`).then((r) => r.data) });
+  const settlements = useQuery({ queryKey: ["settlements", id], queryFn: () => client.get(`/groups/${id}/settlements/`).then((r) => r.data) });
 
   const nameOf = (pid) => people.data?.find((p) => p.id === pid)?.canonical_name || `#${pid}`;
   const membershipOf = (pid) => memberships.data?.find((m) => m.person === pid);
 
+  const aliases = useQuery({ queryKey: ["aliases", id], queryFn: () => client.get(`/groups/${id}/aliases/`).then((r) => r.data) });
+
   const [pname, setPname] = useState("");
   const [pjoined, setPjoined] = useState(today);
+  const [pguest, setPguest] = useState(false);
   const addPerson = useMutation({
-    // A person needs a membership to bear expenses (temporal membership rule),
-    // so create the Person and an open-ended Membership together.
+    // A person needs a membership to bear expenses (temporal membership rule), so a
+    // regular member gets an open-ended Membership. Guests are date-agnostic (they
+    // bypass the membership check), so they get no membership row.
     mutationFn: async () => {
-      const { data: person } = await client.post(`/groups/${id}/people/`, { canonical_name: pname });
-      await client.post(`/groups/${id}/memberships/`, { person: person.id, joined_on: pjoined || today });
+      const { data: person } = await client.post(`/groups/${id}/people/`, { canonical_name: pname, is_guest: pguest });
+      if (!pguest) {
+        await client.post(`/groups/${id}/memberships/`, { person: person.id, joined_on: pjoined || today });
+      }
       return person;
     },
     onSuccess: () => {
-      setPname(""); setPjoined(today);
+      setPname(""); setPjoined(today); setPguest(false);
       qc.invalidateQueries({ queryKey: ["people", id] });
       qc.invalidateQueries({ queryKey: ["memberships", id] });
     },
+  });
+
+  // Set / clear a member's leave date (Meera-left-in-March style membership edits).
+  const setLeftOn = useMutation({
+    mutationFn: ({ mid, left_on }) => client.patch(`/memberships/${mid}/`, { left_on: left_on || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["memberships", id] }),
+  });
+
+  const [aname, setAname] = useState("");
+  const [aperson, setAperson] = useState("");
+  const addAlias = useMutation({
+    mutationFn: () => client.post(`/groups/${id}/aliases/`, { raw_alias: aname, person: Number(aperson) }),
+    onSuccess: () => { setAname(""); setAperson(""); qc.invalidateQueries({ queryKey: ["aliases", id] }); },
+  });
+  const delAlias = useMutation({
+    mutationFn: (aid) => client.delete(`/aliases/${aid}/`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["aliases", id] }),
   });
 
   const emptyExp = { spent_on: today, description: "", paid_by: "", amount: "", currency: "INR", participants: [] };
@@ -124,15 +167,21 @@ export default function GroupDetail() {
               {people.data.map((p) => {
                 const m = membershipOf(p.id);
                 return (
-                  <li key={p.id}>
+                  <li key={p.id} style={{ alignItems: "flex-start" }}>
                     <Avatar name={p.canonical_name} className="sm" />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 500 }}>{p.canonical_name}</div>
-                      {m && (
-                        <div className="faint" style={{ fontSize: 12 }}>
-                          {m.left_on ? `${m.joined_on} → ${m.left_on}` : `Member since ${m.joined_on}`}
-                        </div>
-                      )}
+                      {p.is_guest ? (
+                        <div className="faint" style={{ fontSize: 12 }}>Guest · no membership dates</div>
+                      ) : m ? (
+                        <>
+                          <div className="faint" style={{ fontSize: 12 }}>
+                            {m.left_on ? `${m.joined_on} → ${m.left_on}` : `Member since ${m.joined_on}`}
+                          </div>
+                          <LeaveDateEditor membership={m} saving={setLeftOn.isPending}
+                            onSave={(left_on) => setLeftOn.mutate({ mid: m.id, left_on })} />
+                        </>
+                      ) : null}
                     </div>
                     {p.is_guest && <Badge tone="neutral">guest</Badge>}
                   </li>
@@ -142,15 +191,20 @@ export default function GroupDetail() {
           ) : (
             <EmptyState icon="users" title="No people yet">Add the members of this group below.</EmptyState>
           )}
+          {setLeftOn.isError && <span className="error">{JSON.stringify(setLeftOn.error.response?.data)}</span>}
           <form className="stack gap-sm" style={{ marginTop: 14 }}
             onSubmit={(e) => { e.preventDefault(); if (pname.trim()) addPerson.mutate(); }}>
             <input placeholder="Add a person" value={pname} onChange={(e) => setPname(e.target.value)} />
             <div className="row" style={{ alignItems: "flex-end" }}>
-              <label className="field" style={{ flex: 1, fontSize: 12 }}>Member since
-                <input type="date" value={pjoined} onChange={(e) => setPjoined(e.target.value)} />
+              <label className="field" style={{ flex: 1, fontSize: 12, opacity: pguest ? 0.5 : 1 }}>Member since
+                <input type="date" value={pjoined} disabled={pguest} onChange={(e) => setPjoined(e.target.value)} />
               </label>
               <button type="submit" disabled={!pname.trim() || addPerson.isPending}><Icon name="plus" size={16} /> Add</button>
             </div>
+            <label className="row" style={{ gap: 8, fontSize: 13, cursor: "pointer" }}>
+              <input type="checkbox" checked={pguest} onChange={(e) => setPguest(e.target.checked)} />
+              Guest (one-off participant — no join/leave dates, always allowed on expenses)
+            </label>
             {addPerson.isError && <span className="error">{JSON.stringify(addPerson.error.response?.data)}</span>}
           </form>
         </div>
@@ -195,6 +249,47 @@ export default function GroupDetail() {
             </ul>
           )}
         </div>
+      </div>
+
+      {/* Name aliases */}
+      <div className="card">
+        <div className="card-head">
+          <h3><span className="head-icon"><Icon name="sparkles" size={18} /></span> Name aliases</h3>
+          <span className="faint">map messy import names → a person</span>
+        </div>
+        <p className="muted" style={{ marginTop: -4 }}>
+          Spreadsheets are messy — the same person shows up as <code>Priya S</code>, <code>priya</code>, or <code>rohan </code>.
+          Case and spacing are matched automatically; add an alias only when the spelling differs (e.g. <code>Priya S → Priya</code>).
+        </p>
+        {aliases.data?.length ? (
+          <ul className="list divided" style={{ marginTop: 10 }}>
+            {aliases.data.map((a) => (
+              <li key={a.id}>
+                <code style={{ fontWeight: 600 }}>{a.raw_alias}</code>
+                <Icon name="arrowRight" size={14} style={{ color: "var(--text-3)" }} />
+                <span style={{ flex: 1 }}>{nameOf(a.person)}</span>
+                <button className="ghost sm icon-btn" title="Remove alias" disabled={delAlias.isPending}
+                  onClick={() => delAlias.mutate(a.id)}><Icon name="x" size={14} /></button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState icon="sparkles" title="No aliases yet">Add one if a spreadsheet name won't match by spelling.</EmptyState>
+        )}
+        <form className="row wrap" style={{ marginTop: 12, alignItems: "flex-end" }}
+          onSubmit={(e) => { e.preventDefault(); if (aname.trim() && aperson) addAlias.mutate(); }}>
+          <label className="field" style={{ flex: "2 1 160px" }}>Spreadsheet name
+            <input placeholder="e.g. Priya S" value={aname} onChange={(e) => setAname(e.target.value)} />
+          </label>
+          <label className="field" style={{ flex: "1 1 140px" }}>Is really
+            <select value={aperson} onChange={(e) => setAperson(e.target.value)}>
+              <option value="">Select…</option>
+              {people.data?.map((p) => <option key={p.id} value={p.id}>{p.canonical_name}</option>)}
+            </select>
+          </label>
+          <button type="submit" disabled={!aname.trim() || !aperson || addAlias.isPending}><Icon name="plus" size={16} /> Add alias</button>
+        </form>
+        {addAlias.isError && <span className="error">{JSON.stringify(addAlias.error.response?.data)}</span>}
       </div>
 
       {/* Add expense */}
@@ -293,8 +388,35 @@ export default function GroupDetail() {
       {/* Settlement */}
       <div className="card">
         <div className="card-head">
-          <h3><span className="head-icon"><Icon name="handshake" size={18} /></span> Record a settlement</h3>
+          <h3><span className="head-icon"><Icon name="handshake" size={18} /></span> Settlements</h3>
+          <span className="faint">{settlements.data?.length || 0} recorded</span>
         </div>
+
+        {/* every settlement that has happened — manual + reclassified from an import */}
+        {settlements.isLoading ? (
+          <Spinner label="Loading settlements…" />
+        ) : settlements.data?.length ? (
+          <div className="table-wrap" style={{ marginBottom: 18 }}>
+            <table>
+              <thead><tr><th>Date</th><th>From</th><th>To</th><th className="num">Amount</th><th>Source</th></tr></thead>
+              <tbody>
+                {settlements.data.map((s) => (
+                  <tr key={s.id}>
+                    <td className="mono faint" style={{ whiteSpace: "nowrap" }}>{s.settled_on}</td>
+                    <td><span className="row" style={{ gap: 8 }}><Avatar name={nameOf(s.from_person)} className="sm" /> {nameOf(s.from_person)}</span></td>
+                    <td><span className="row" style={{ gap: 8 }}><Avatar name={nameOf(s.to_person)} className="sm" /> {nameOf(s.to_person)}</span></td>
+                    <td className="num mono" style={{ fontWeight: 600 }}>{rupees(s.amount_minor)}</td>
+                    <td><Badge tone={s.origin === "manual" ? "neutral" : "pos"}>{s.origin === "manual" ? "manual" : "from import"}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState icon="handshake" title="No settlements yet">Record a payment below, or import a spreadsheet — settlements from imports show up here too.</EmptyState>
+        )}
+
+        <h4 style={{ margin: "4px 0 12px" }}>Record a settlement</h4>
         <div className="row wrap">
           <label className="field" style={{ flex: "1 1 150px" }}>From
             <select value={settle.from_person} onChange={(e) => setSettle({ ...settle, from_person: e.target.value })}>

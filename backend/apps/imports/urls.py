@@ -1,9 +1,12 @@
 from django.urls import path
 
-from .views import (AnomalyResolveView, ImportCommitView, ImportReportView,
+from .views import (AnomalyResolveView, ImportApplyRosterView,
+                    ImportCommitView, ImportReportView, ImportScanRosterView,
                     ImportUploadView)
 
 urlpatterns = [
+    path("groups/<int:group_id>/import/scan-roster/", ImportScanRosterView.as_view(), name="import-scan-roster"),
+    path("groups/<int:group_id>/import/apply-roster/", ImportApplyRosterView.as_view(), name="import-apply-roster"),
     path("groups/<int:group_id>/import/", ImportUploadView.as_view(), name="import-upload"),
     path("import/<int:batch_id>/report/", ImportReportView.as_view(), name="import-report"),
     path("import/anomalies/<int:anomaly_id>/resolve/", AnomalyResolveView.as_view(), name="anomaly-resolve"),

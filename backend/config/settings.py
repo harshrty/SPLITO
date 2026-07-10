@@ -1,7 +1,12 @@
 """Django settings for SPLITO backend."""
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
+
+# Throttling is disabled under the test runner so the suite isn't rate-limited;
+# a dedicated test re-enables it via override_settings to prove it works.
+TESTING = "test" in sys.argv
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -31,6 +36,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # third-party
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     # local apps
     "apps.accounts",
@@ -96,9 +102,29 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
 }
 
+# Rate limiting: protects the unauthenticated auth endpoints from brute-force /
+# enumeration / spam, and caps authenticated abuse. Disabled under the test runner.
+if not TESTING:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = (
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    )
+    REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
+        "anon": "30/min",
+        "user": "2000/hour",
+        "login": "5/min",       # credential brute-force
+        "register": "5/min",    # account spam / enumeration
+        "imports": "30/hour",   # file-upload abuse
+    }
+
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=12),
+    # Short-lived access token limits the blast radius of a leaked/localStorage-stolen
+    # token; refresh tokens rotate and the old one is blacklisted so logout can revoke.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 CORS_ALLOWED_ORIGINS = os.getenv(
@@ -126,3 +152,9 @@ if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    # force HTTPS + HSTS so a bearer token can't be captured over a downgraded
+    # (SSL-strip) connection
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True

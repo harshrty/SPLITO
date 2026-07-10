@@ -35,7 +35,7 @@ export default function Login({ initial = "register" }) {
         email: form.email,
         password: form.password,
       });
-      setAuth(data.access, data.user);
+      setAuth(data.access, data.refresh, data.user);
       navigate("/app");
     } catch (err) {
       const d = err.response?.data;

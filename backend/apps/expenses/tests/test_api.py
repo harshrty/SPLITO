@@ -109,3 +109,42 @@ class ApiFlowTests(APITestCase):
         }, format="json")
         self.assertEqual(resp.status_code, 400, resp.data)
         self.assertIn("person", resp.data)
+
+    # -- self-service roster setup (guest / leave date / alias) -----------
+
+    def test_add_guest_person_via_api(self):
+        resp = self.client.post(f"/api/groups/{self.group.id}/people/",
+                                {"canonical_name": "Dev", "is_guest": True}, format="json")
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertTrue(resp.data["is_guest"])
+
+    def test_set_membership_leave_date(self):
+        m = Membership.objects.get(person=self.rohan)
+        resp = self.client.patch(f"/api/memberships/{m.id}/", {"left_on": "2026-05-31"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        m.refresh_from_db()
+        self.assertEqual(str(m.left_on), "2026-05-31")
+
+    def test_leave_date_before_join_rejected(self):
+        m = Membership.objects.get(person=self.rohan)  # joined 2026-02-01
+        resp = self.client.patch(f"/api/memberships/{m.id}/", {"left_on": "2026-01-01"}, format="json")
+        self.assertEqual(resp.status_code, 400, resp.data)
+
+    def test_alias_create_list_and_scoping(self):
+        # create
+        resp = self.client.post(f"/api/groups/{self.group.id}/aliases/",
+                                {"raw_alias": "Priya S", "person": self.aisha.id}, format="json")
+        self.assertEqual(resp.status_code, 201, resp.data)
+        # list
+        listed = self.client.get(f"/api/groups/{self.group.id}/aliases/").data
+        self.assertEqual(len(listed), 1)
+        # duplicate (case/space-insensitive) is a friendly 400, not a 500
+        dup = self.client.post(f"/api/groups/{self.group.id}/aliases/",
+                               {"raw_alias": "  priya s ", "person": self.rohan.id}, format="json")
+        self.assertEqual(dup.status_code, 400, dup.data)
+        # cross-group person rejected
+        other_group = ExpenseGroup.objects.create(name="Other", created_by=self.user)
+        outsider = Person.objects.create(group=other_group, canonical_name="Outsider")
+        cross = self.client.post(f"/api/groups/{self.group.id}/aliases/",
+                                 {"raw_alias": "outy", "person": outsider.id}, format="json")
+        self.assertEqual(cross.status_code, 400, cross.data)
