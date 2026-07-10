@@ -4,7 +4,7 @@ import client from "../api/client";
 import { Icon, Badge, EmptyState } from "../components/ui";
 
 function Stepper({ step }) {
-  const steps = ["Upload", "Review", "Done"];
+  const steps = ["Upload", "People", "Review", "Done"];
   return (
     <div className="row" style={{ gap: 0, marginBottom: 22 }}>
       {steps.map((s, i) => {
@@ -35,23 +35,61 @@ function Stepper({ step }) {
 export default function ImportWizard() {
   const { id } = useParams();
   const [file, setFile] = useState(null);
+  const [roster, setRoster] = useState(null);   // { candidates, suggested_start_date, existing_people }
+  const [draft, setDraft] = useState([]);        // editable candidate rows
+  const [startDate, setStartDate] = useState("");
   const [batch, setBatch] = useState(null);
   const [report, setReport] = useState([]);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const upload = async () => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Step 0 → scan the sheet for people (persists nothing)
+  const scan = async () => {
     setError(""); setResult(null); setBusy(true);
     const fd = new FormData();
     fd.append("file", file);
     try {
-      const { data } = await client.post(`/groups/${id}/import/`, fd);
-      setBatch(data.batch_id);
-      setReport(data.report);
-    } catch (e) { setError(JSON.stringify(e.response?.data || "upload failed")); }
+      const { data } = await client.post(`/groups/${id}/import/scan-roster/`, fd);
+      // everyone already exists → skip the People step entirely
+      if (data.candidates.length && data.candidates.every((c) => c.already_exists)) {
+        await ingest();
+        return;
+      }
+      setRoster(data);
+      setStartDate(data.suggested_start_date || today);
+      setDraft(data.candidates.map((c) => ({ ...c, include: !c.already_exists })));
+    } catch (e) { setError(JSON.stringify(e.response?.data || "scan failed")); }
     finally { setBusy(false); }
   };
+
+  // ingest + run detectors against the (now populated) roster
+  const ingest = async () => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await client.post(`/groups/${id}/import/`, fd);
+    setBatch(data.batch_id);
+    setReport(data.report);
+  };
+
+  // Step 1 → create the confirmed roster, then ingest
+  const applyAndIngest = async () => {
+    setError(""); setBusy(true);
+    try {
+      const people = draft.filter((d) => d.include).map((d) => ({
+        canonical: d.canonical, is_guest: d.is_guest, aliases: d.variants,
+      }));
+      if (people.length) {
+        await client.post(`/groups/${id}/import/apply-roster/`, { start_date: startDate, people });
+      }
+      await ingest();
+    } catch (e) { setError(JSON.stringify(e.response?.data || "could not create roster")); }
+    finally { setBusy(false); }
+  };
+
+  const updRow = (i, patch) => setDraft((d) => d.map((row, j) => (j === i ? { ...row, ...patch } : row)));
 
   const resolve = async (anomalyId, status) => {
     await client.post(`/import/anomalies/${anomalyId}/resolve/`, { status });
@@ -64,13 +102,15 @@ export default function ImportWizard() {
       const { data } = await client.post(`/import/${batch}/commit/`);
       setResult(data);
     } catch (e) {
-      setError(e.response?.status === 409 ? "Resolve all blocking anomalies first." : JSON.stringify(e.response?.data));
+      const detail = e.response?.data?.detail;
+      setError(e.response?.status === 409 ? (detail || "Resolve all blocking anomalies first.") : JSON.stringify(e.response?.data));
     } finally { setBusy(false); }
   };
 
   const pendingBlocks = report.filter((a) => a.severity === "block" && a.status === "pending").length;
   const blocks = report.filter((a) => a.severity === "block").length;
-  const step = result ? 2 : batch ? 1 : 0;
+  const includedCount = draft.filter((d) => d.include).length;
+  const step = result ? 3 : batch ? 2 : roster ? 1 : 0;
 
   return (
     <div className="stack gap-lg">
@@ -79,7 +119,7 @@ export default function ImportWizard() {
           <Link to={`/groups/${id}`} className="btn ghost sm icon-btn" title="Back to group"><Icon name="arrowLeft" size={16} /></Link>
           <div>
             <h1>Import spreadsheet</h1>
-            <p className="sub">Detect → review → approve → commit. Nothing enters the ledger until you commit.</p>
+            <p className="sub">Scan → confirm people → review → commit. Nothing enters the ledger until you commit.</p>
           </div>
         </div>
       </div>
@@ -91,21 +131,83 @@ export default function ImportWizard() {
           <div className="stack gap">
             <div className="alert info">
               <Icon name="info" size={18} />
-              <span>Upload <code>expenses_export</code> (.xlsx or .csv). We scan every row for anomalies and quarantine them for review — nothing is imported yet.</span>
+              <span>Upload <code>expenses_export</code> (.xlsx or .csv). We first scan it for the people involved so the group's roster is set up before anything is imported.</span>
             </div>
             <label className="field">Spreadsheet file
               <input type="file" accept=".xlsx,.csv" onChange={(e) => setFile(e.target.files[0])} />
             </label>
             <div>
-              <button disabled={!file || busy} onClick={upload}>
-                {busy ? <span className="spinner" style={{ borderTopColor: "#fff", borderColor: "rgba(255,255,255,.4)" }} /> : <Icon name="upload" size={16} />}
-                Upload & scan
+              <button disabled={!file || busy} onClick={scan}>
+                {busy ? <span className="spinner" style={{ borderTopColor: "#fff", borderColor: "rgba(255,255,255,.4)" }} /> : <Icon name="users" size={16} />}
+                Scan for people
               </button>
             </div>
           </div>
         )}
 
         {step === 1 && (
+          <div className="stack gap">
+            <div className="row between wrap" style={{ gap: 12 }}>
+              <div className="row" style={{ gap: 10 }}>
+                <h3>Confirm the people</h3>
+                <Badge tone="neutral">{draft.length} found</Badge>
+                <Badge tone="pos">{includedCount} to add</Badge>
+              </div>
+              <button disabled={busy} onClick={applyAndIngest}>
+                {busy ? <span className="spinner" style={{ borderTopColor: "#fff", borderColor: "rgba(255,255,255,.4)" }} /> : <Icon name="check" size={16} />}
+                Create roster &amp; scan expenses
+              </button>
+            </div>
+            <div className="alert info">
+              <Icon name="sparkles" size={18} />
+              <span>We pulled these names from the sheet and merged obvious spelling variants. Tick <b>Guest</b> for one-off people, untick anyone who shouldn't be added, and set the date everyone joined. Extra spellings become aliases automatically.</span>
+            </div>
+            <label className="field" style={{ maxWidth: 240 }}>Everyone joined on
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </label>
+
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Add</th><th>Person</th><th>Guest</th><th>Spellings in file</th><th className="num">Rows</th></tr></thead>
+                <tbody>
+                  {draft.map((d, i) => (
+                    <tr key={i} style={{ opacity: d.include ? 1 : 0.5 }}>
+                      <td>
+                        <input type="checkbox" checked={d.include} disabled={d.already_exists}
+                          onChange={(e) => updRow(i, { include: e.target.checked })} />
+                      </td>
+                      <td>
+                        <input value={d.canonical} onChange={(e) => updRow(i, { canonical: e.target.value })}
+                          style={{ minWidth: 130, padding: "4px 8px" }} disabled={d.person_known} />
+                        {d.already_exists
+                          ? <span className="faint" style={{ fontSize: 11, marginLeft: 6 }}>already in group</span>
+                          : d.person_known
+                            ? <span className="faint" style={{ fontSize: 11, marginLeft: 6 }}>known · links new spelling</span>
+                            : null}
+                      </td>
+                      <td>
+                        <input type="checkbox" checked={d.is_guest} disabled={d.person_known}
+                          onChange={(e) => updRow(i, { is_guest: e.target.checked })} />
+                      </td>
+                      <td>
+                        <span className="row wrap" style={{ gap: 4 }}>
+                          {d.variants.map((v) => <code key={v} style={{ fontSize: 11 }}>{v}</code>)}
+                        </span>
+                      </td>
+                      <td className="num mono faint">{d.occurrences}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted" style={{ fontSize: 13 }}>
+              Note: the sheet has no join/leave history — everyone gets the date above. You can refine individual leave dates
+              (e.g. someone who moved out) on the group page afterwards.
+            </p>
+          </div>
+        )}
+
+        {step === 2 && (
           <div className="stack gap">
             <div className="row between wrap" style={{ gap: 12 }}>
               <div className="row" style={{ gap: 10 }}>
@@ -162,7 +264,7 @@ export default function ImportWizard() {
           </div>
         )}
 
-        {step === 2 && result && (
+        {step === 3 && result && (
           <div className="stack gap">
             <div className="row" style={{ gap: 12 }}>
               <span className="stat-icon" style={{ background: "var(--pos-bg)", color: "var(--pos)", width: 44, height: 44 }}>

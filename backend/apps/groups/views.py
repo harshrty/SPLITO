@@ -1,8 +1,9 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, viewsets
 
-from .models import ExpenseGroup, Membership, Person
-from .serializers import GroupSerializer, MembershipSerializer, PersonSerializer
+from .models import ExpenseGroup, Membership, Person, PersonAlias
+from .serializers import (GroupSerializer, MembershipSerializer,
+                          PersonAliasSerializer, PersonSerializer)
 
 
 def owned_group(user, group_id):
@@ -57,3 +58,30 @@ class MembershipDetail(generics.RetrieveUpdateAPIView):
 
     def get_queryset(self):
         return Membership.objects.filter(group__created_by=self.request.user)
+
+
+class AliasListCreate(generics.ListCreateAPIView):
+    """Name aliases so messy import names resolve to the right Person."""
+
+    serializer_class = PersonAliasSerializer
+
+    def get_queryset(self):
+        group = owned_group(self.request.user, self.kwargs["group_id"])
+        return PersonAlias.objects.filter(group=group).order_by("id")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        if self.request.method == "POST":
+            ctx["group"] = owned_group(self.request.user, self.kwargs["group_id"])
+        return ctx
+
+    def perform_create(self, serializer):
+        group = owned_group(self.request.user, self.kwargs["group_id"])
+        serializer.save(group=group)
+
+
+class AliasDelete(generics.DestroyAPIView):
+    serializer_class = PersonAliasSerializer
+
+    def get_queryset(self):
+        return PersonAlias.objects.filter(group__created_by=self.request.user)
