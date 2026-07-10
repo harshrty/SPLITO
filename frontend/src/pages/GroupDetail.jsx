@@ -30,6 +30,7 @@ export default function GroupDetail() {
     qc.invalidateQueries({ queryKey: ["balances", id] });
     qc.invalidateQueries({ queryKey: ["expenses", id] });
     qc.invalidateQueries({ queryKey: ["simplified", id] });
+    qc.invalidateQueries({ queryKey: ["settlements", id] });
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -40,6 +41,7 @@ export default function GroupDetail() {
   const expenses = useQuery({ queryKey: ["expenses", id], queryFn: () => client.get(`/groups/${id}/expenses/`).then((r) => r.data) });
   const balances = useQuery({ queryKey: ["balances", id], queryFn: () => client.get(`/groups/${id}/balances/`).then((r) => r.data) });
   const simplified = useQuery({ queryKey: ["simplified", id], queryFn: () => client.get(`/groups/${id}/balances/simplified/`).then((r) => r.data) });
+  const settlements = useQuery({ queryKey: ["settlements", id], queryFn: () => client.get(`/groups/${id}/settlements/`).then((r) => r.data) });
 
   const nameOf = (pid) => people.data?.find((p) => p.id === pid)?.canonical_name || `#${pid}`;
   const membershipOf = (pid) => memberships.data?.find((m) => m.person === pid);
@@ -386,8 +388,35 @@ export default function GroupDetail() {
       {/* Settlement */}
       <div className="card">
         <div className="card-head">
-          <h3><span className="head-icon"><Icon name="handshake" size={18} /></span> Record a settlement</h3>
+          <h3><span className="head-icon"><Icon name="handshake" size={18} /></span> Settlements</h3>
+          <span className="faint">{settlements.data?.length || 0} recorded</span>
         </div>
+
+        {/* every settlement that has happened — manual + reclassified from an import */}
+        {settlements.isLoading ? (
+          <Spinner label="Loading settlements…" />
+        ) : settlements.data?.length ? (
+          <div className="table-wrap" style={{ marginBottom: 18 }}>
+            <table>
+              <thead><tr><th>Date</th><th>From</th><th>To</th><th className="num">Amount</th><th>Source</th></tr></thead>
+              <tbody>
+                {settlements.data.map((s) => (
+                  <tr key={s.id}>
+                    <td className="mono faint" style={{ whiteSpace: "nowrap" }}>{s.settled_on}</td>
+                    <td><span className="row" style={{ gap: 8 }}><Avatar name={nameOf(s.from_person)} className="sm" /> {nameOf(s.from_person)}</span></td>
+                    <td><span className="row" style={{ gap: 8 }}><Avatar name={nameOf(s.to_person)} className="sm" /> {nameOf(s.to_person)}</span></td>
+                    <td className="num mono" style={{ fontWeight: 600 }}>{rupees(s.amount_minor)}</td>
+                    <td><Badge tone={s.origin === "manual" ? "neutral" : "pos"}>{s.origin === "manual" ? "manual" : "from import"}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState icon="handshake" title="No settlements yet">Record a payment below, or import a spreadsheet — settlements from imports show up here too.</EmptyState>
+        )}
+
+        <h4 style={{ margin: "4px 0 12px" }}>Record a settlement</h4>
         <div className="row wrap">
           <label className="field" style={{ flex: "1 1 150px" }}>From
             <select value={settle.from_person} onChange={(e) => setSettle({ ...settle, from_person: e.target.value })}>
